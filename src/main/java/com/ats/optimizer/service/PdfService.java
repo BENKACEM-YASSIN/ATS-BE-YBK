@@ -102,10 +102,13 @@ public class PdfService {
                 // Wait for .cv-page which is our new wrapper
                 page.waitForSelector(".cv-page", new Page.WaitForSelectorOptions().setTimeout(20000));
                 log.info("CV container found!");
+                // Wait for pagination to finish so each page has proper spacing
+                page.waitForSelector("body.pdf-ready", new Page.WaitForSelectorOptions().setTimeout(20000));
+                log.info("PDF pagination ready.");
             } catch (Exception e) {
-                log.error("Timeout waiting for CV container. Content snippet: {}", 
+                log.error("Timeout waiting for CV render readiness. Content snippet: {}", 
                          page.content().substring(0, Math.min(2000, page.content().length())));
-                throw new RuntimeException("Timeout: CV preview failed to render. Selector '.cv-page' not found.");
+                throw new RuntimeException("Timeout: CV preview failed to render. Selector '.cv-page' or 'body.pdf-ready' not found.");
             }
 
             page.emulateMedia(new Page.EmulateMediaOptions().setMedia(Media.PRINT));
