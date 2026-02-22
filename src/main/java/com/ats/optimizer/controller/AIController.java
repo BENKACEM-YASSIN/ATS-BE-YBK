@@ -28,7 +28,11 @@ public class AIController {
 
     @PostMapping("/generate-bullets")
     public ResponseEntity<List<String>> generateTailoredBullets(@RequestBody TailoredBulletsRequest request) {
-        return ResponseEntity.ok(geminiService.generateTailoredBullets(request.getDraftText(), request.getJobDescription()));
+        return ResponseEntity.ok(geminiService.generateTailoredBullets(
+                request.getDraftText(),
+                request.getJobDescription(),
+                request.getSectionType()
+        ));
     }
 
     @PostMapping("/parse-cv")

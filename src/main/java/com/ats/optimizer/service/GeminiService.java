@@ -53,16 +53,70 @@ public class GeminiService {
 
         String systemInstruction;
         String prompt;
+        String normalizedType = normalizeEnhanceType(type);
 
-        if ("job".equals(type)) {
-            systemInstruction = "You are an expert CV writer. Rewrite the user's job description. Return a JSON array of 3 strings. 1) ATS Optimized (keyword heavy), 2) Professional & Concise, 3) Action-Oriented. Return ONLY the JSON array.";
-            prompt = "Enhance the following job description: \"" + text + "\"";
-        } else if ("summary".equals(type)) {
-            systemInstruction = "You are an expert CV writer. Rewrite the professional summary. Return a JSON array of 3 strings. 1) ATS Optimized (keyword focused), 2) Engaging & Story-driven, 3) Executive/Professional. Return ONLY the JSON array.";
-            prompt = "Enhance the following summary: \"" + text + "\"";
-        } else {
-            systemInstruction = "You are a career coach. Suggest professional skills based on the input. Return a JSON array with a single string containing a comma-separated list of skills.";
-            prompt = "Suggest skills for: \"" + text + "\"";
+        switch (normalizedType) {
+            case "job" -> {
+                systemInstruction = """
+                        You are an expert CV writer.
+                        Rewrite the user's work-experience paragraph.
+                        Return a JSON array of 3 strings:
+                        1) ATS Optimized (keyword heavy),
+                        2) Professional & Concise,
+                        3) Action-Oriented.
+                        Keep all claims truthful and avoid inventing achievements.
+                        Return ONLY the JSON array.
+                        """;
+                prompt = "Enhance the following work-experience description: \"" + text + "\"";
+            }
+            case "summary" -> {
+                systemInstruction = """
+                        You are an expert CV writer.
+                        Rewrite the professional summary paragraph.
+                        Return a JSON array of 3 strings:
+                        1) ATS Optimized (keyword focused),
+                        2) Clear & Professional,
+                        3) Executive Tone.
+                        Keep it concise and truthful.
+                        Return ONLY the JSON array.
+                        """;
+                prompt = "Enhance the following professional summary: \"" + text + "\"";
+            }
+            case "education" -> {
+                systemInstruction = """
+                        You are an expert CV writer.
+                        Rewrite the education details paragraph for a resume.
+                        Return a JSON array of 3 strings:
+                        1) ATS Optimized (keywords, technologies, coursework),
+                        2) Academic & Concise,
+                        3) Achievement-Focused.
+                        Keep the output factual and professional.
+                        IMPORTANT EDUCATION RULES:
+                        - Keep the framing academic (coursework, projects, labs, thesis, certifications, honors, learning outcomes).
+                        - Do NOT rewrite this as full-time job experience.
+                        - Do NOT invent employment responsibilities, company impact, or team management unless explicitly stated in the input.
+                        - If the input sounds like work tasks, reframe them as academic projects or practical training outcomes when truthful.
+                        Return ONLY the JSON array.
+                        """;
+                prompt = "Enhance the following education description: \"" + text + "\"";
+            }
+            case "custom" -> {
+                systemInstruction = """
+                        You are an expert CV writer.
+                        Rewrite this custom-section description for resume impact.
+                        Return a JSON array of 3 strings:
+                        1) ATS Optimized,
+                        2) Professional & Concise,
+                        3) Results-Oriented.
+                        Keep all statements truthful.
+                        Return ONLY the JSON array.
+                        """;
+                prompt = "Enhance the following custom section description: \"" + text + "\"";
+            }
+            default -> {
+                systemInstruction = "You are a career coach. Suggest professional skills based on the input. Return a JSON array with a single string containing a comma-separated list of skills.";
+                prompt = "Suggest skills for: \"" + text + "\"";
+            }
         }
 
         String responseText = callGemini(prompt, systemInstruction, 0.7);
@@ -81,42 +135,136 @@ public class GeminiService {
         }
     }
 
-    public List<String> generateTailoredBullets(String draftText, String jobDescription) {
+    public List<String> generateTailoredBullets(String draftText, String jobDescription, String sectionType) {
         if (apiKey == null || apiKey.isEmpty()) {
             throw new RuntimeException("API Key is missing.");
         }
 
         boolean hasJD = jobDescription != null && !jobDescription.trim().isEmpty();
+        String normalizedSectionType = normalizeBulletSectionType(sectionType);
+        String sectionTaskInstruction;
+        String sectionRules;
+        String jdRules;
+        String nonJdRules;
+
+        switch (normalizedSectionType) {
+            case "education" -> {
+                sectionTaskInstruction = "Convert the candidate's education details into 8-12 high-impact resume bullet points.";
+                sectionRules = """
+                        1. Focus on coursework, projects, certifications, honors, and practical outcomes.
+                        2. Include tools/technologies/methods when present.
+                        3. Keep bullets concise, factual, and outcome-focused.
+                        4. Keep an academic tone and learning-outcome framing.
+                        5. Do not describe full-time employment impact unless explicitly present in the input.
+                        """;
+                jdRules = """
+                        1. Identify overlap with the target job and prioritize relevant academic projects/skills.
+                        2. Incorporate missing keywords naturally and truthfully.
+                        3. Keep education framing (coursework, labs, projects, thesis, certifications).
+                        4. Avoid business ownership/management claims unless explicitly in source text.
+                        5. Sort from highest role relevance to lowest.
+                        6. Quantity: at least 8 bullets.
+                        """;
+                nonJdRules = """
+                        1. Convert content into education bullets centered on learning outcomes and academic achievements.
+                        2. Prefer wording such as completed, studied, designed, implemented, researched, built (in projects/labs).
+                        3. Include tools, technologies, methods, and measurable project outcomes where available.
+                        4. Keep wording concise and factual; avoid company-impact language unless explicitly in source.
+                        5. Quantity: at least 8 bullets.
+                        """;
+            }
+            case "summary" -> {
+                sectionTaskInstruction = "Convert the candidate's summary into 8-12 concise value-proposition bullet points.";
+                sectionRules = """
+                        1. Emphasize strengths, domain expertise, and measurable impact.
+                        2. Keep tone professional and credible; avoid generic buzzwords.
+                        3. Ensure each bullet can stand alone in a resume section.
+                        """;
+                jdRules = """
+                        1. Align bullets with target role keywords and responsibilities.
+                        2. Prioritize strongest value propositions first.
+                        3. Keep claims truthful and concise.
+                        4. Quantity: at least 8 bullets.
+                        """;
+                nonJdRules = """
+                        1. Convert summary into concise, recruiter-friendly bullets.
+                        2. Highlight strengths, scope, and evidence of impact.
+                        3. Avoid fluff and repetition.
+                        4. Quantity: at least 8 bullets.
+                        """;
+            }
+            case "custom" -> {
+                sectionTaskInstruction = "Convert the custom section text into 8-12 high-impact resume bullet points.";
+                sectionRules = """
+                        1. Infer section intent from the text and preserve context.
+                        2. Use achievement-oriented phrasing where possible.
+                        3. Keep bullets concise and recruiter-friendly.
+                        """;
+                jdRules = """
+                        1. Align bullets to the target role using truthful keyword matching.
+                        2. Preserve custom-section context and avoid forcing job-experience phrasing.
+                        3. Sort by relevance and impact.
+                        4. Quantity: at least 8 bullets.
+                        """;
+                nonJdRules = """
+                        1. Convert into clear bullets suited to this section's context.
+                        2. Keep bullets concise, factual, and non-redundant.
+                        3. Use impact-oriented phrasing only when supported by source text.
+                        4. Quantity: at least 8 bullets.
+                        """;
+            }
+            default -> {
+                sectionTaskInstruction = "Convert the candidate's work experience into 10-15 high-impact, ATS-optimized bullet points.";
+                sectionRules = """
+                        1. Focus on achievements, scope, ownership, and impact.
+                        2. Use strong action verbs and include metrics when possible.
+                        3. Keep bullets concise and professional.
+                        """;
+                jdRules = """
+                        1. Identify weaknesses vs JD and bridge missing keywords truthfully.
+                        2. Prioritize high-relevance accomplishments first.
+                        3. Sort from most relevant/high impact to least.
+                        4. Quantity: at least 10 bullets.
+                        """;
+                nonJdRules = """
+                        1. Transform statements into achievement-oriented bullets.
+                        2. Start with strong action verbs and add metrics where available.
+                        3. Keep bullets concise and professional.
+                        4. Quantity: at least 10 bullets.
+                        """;
+            }
+        }
+
+        String targetJobLine = hasJD
+                ? "Target Job Description: Use the provided Job Description to tailor the bullets.\n\n"
+                : "";
+        String ruleTitle = hasJD ? "ATS Alignment Rules" : "Generation Rules";
+        String activeRules = hasJD ? jdRules : nonJdRules;
 
         String systemInstruction = """
               You are an expert CV writer specializing in ATS optimization.
               
-              Task: Convert the candidate's draft text into a comprehensive list of 10-15 high-impact, ATS-optimized bullet points.
-              """ + (hasJD ? """
-              Target Job Description: Use the provided Job Description to tailor the bullets.
+              Section Type: %s
+              Task: %s
               
-              Rules for Generation:
-              1. **Identify Weaknesses:** Find gaps between the draft text and the Job Description (missing keywords, soft skills, or technical requirements).
-              2. **Bridge Gaps:** Rewrite the draft content to naturally incorporate these missing keywords where truthful.
-              3. **Prioritize Relevance:** Order bullets from highest ATS impact to lowest based on the Job Description.
-              4. **Merge & Impress:** If multiple draft points are similar, merge them into a single, punchy bullet point.
-              5. **Sort Order:** Sort from [Most Relevant/High Impact] to [Least Relevant].
-              6. **Quantity:** Generate at least 10 distinct options.
-              """ : """
-              Rules for Generation:
-              1. **Enhance Impact:** Transform simple tasks into achievement-oriented statements.
-              2. **Action Verbs:** Start every bullet with a strong action verb (e.g., Orchestrated, Spearheaded, Engineered).
-              3. **Metrics:** Include quantifiable results where possible (e.g., "Increased efficiency by 20%").
-              4. **Clarity:** Keep bullets concise and professional.
-              5. **Quantity:** Generate at least 10 distinct options.
-              """) + """
+              Section-Specific Rules:
+              %s
+              
+              %s%s:
+              %s
+              
+              Global Constraints:
+              - Keep all statements truthful and grounded in the provided text.
+              - Avoid duplicate bullets.
+              - Keep the voice aligned to the section type.
               
               Output Format:
-              Return a JSON array of strings only. Example: ["Led team of 5...", "Reduced latency by 20%..."].
+              Return a JSON array of strings only. Example: ["Led team of 5...", "Reduced latency by 20%%..."].
               Do not add numbering, markdown, or prefixes like "- ".
-            """;
+            """.formatted(normalizedSectionType, sectionTaskInstruction, sectionRules, targetJobLine, ruleTitle, activeRules);
 
-        String prompt = "Draft Text: \"" + draftText + "\"" + (hasJD ? "\n\nTarget Job Description: \"" + jobDescription + "\"" : "");
+        String prompt = "Section Type: \"" + normalizedSectionType + "\"\nDraft Text: \"" + draftText + "\"" +
+                (hasJD ? "\n\nTarget Job Description: \"" + jobDescription + "\"" : "");
 
         String responseText = callGemini(prompt, systemInstruction, 0.5);
         try {
@@ -142,6 +290,28 @@ public class GeminiService {
             log.error("Bullet Generation Error:", e);
             throw new RuntimeException("Failed to generate bullets.");
         }
+    }
+
+    private String normalizeEnhanceType(String type) {
+        if (type == null || type.isBlank()) {
+            return "summary";
+        }
+        String normalized = type.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "job", "summary", "education", "custom", "skill" -> normalized;
+            default -> "summary";
+        };
+    }
+
+    private String normalizeBulletSectionType(String sectionType) {
+        if (sectionType == null || sectionType.isBlank()) {
+            return "job";
+        }
+        String normalized = sectionType.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "job", "summary", "education", "custom", "skill" -> normalized;
+            default -> "custom";
+        };
     }
 
     private List<String> rankBulletsByAtsImpact(List<String> rawBullets, String jobDescription) {

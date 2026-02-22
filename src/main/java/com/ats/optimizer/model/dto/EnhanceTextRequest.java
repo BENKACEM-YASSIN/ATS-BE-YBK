@@ -5,5 +5,5 @@ import lombok.Data;
 @Data
 public class EnhanceTextRequest {
     private String text;
-    private String type; // 'job' | 'summary' | 'skill'
+    private String type; // job | summary | education | custom | skill
 }
