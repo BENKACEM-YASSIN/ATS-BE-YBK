@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.util.regex.Pattern;
 import java.util.*;
 
 @Service
@@ -21,6 +22,23 @@ public class GeminiService {
 
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
+
+    private static final Set<String> STOP_WORDS = new HashSet<>(Arrays.asList(
+            "a", "an", "as", "at", "be", "by", "in", "is", "it", "of", "on", "or", "to",
+            "the", "and", "for", "with", "from", "that", "this", "into", "your", "you", "are", "our", "their",
+            "have", "has", "had", "will", "can", "must", "able", "using", "used", "use", "work", "works",
+            "role", "team", "teams", "within", "across", "including", "develop", "developed", "development",
+            "experience", "years", "year", "strong", "good", "high", "level", "required", "preferred",
+            "responsible", "responsibilities", "knowledge", "skills", "skill", "candidate", "position", "job"
+    ));
+
+    private static final Set<String> ACTION_VERBS = new HashSet<>(Arrays.asList(
+            "led", "built", "designed", "implemented", "optimized", "delivered", "developed", "created",
+            "launched", "improved", "managed", "reduced", "increased", "automated", "scaled", "engineered",
+            "spearheaded", "drove", "orchestrated", "integrated", "maintained"
+    ));
+
+    private static final Pattern NON_KEYWORD_CHARS = Pattern.compile("[^a-z0-9+# ]");
 
     @Value("${gemini.api.key}")
     private String apiKey;
@@ -80,7 +98,7 @@ public class GeminiService {
               Rules for Generation:
               1. **Identify Weaknesses:** Find gaps between the draft text and the Job Description (missing keywords, soft skills, or technical requirements).
               2. **Bridge Gaps:** Rewrite the draft content to naturally incorporate these missing keywords where truthful.
-              3. **Prioritize Relevance:** The first bullet point MUST be the most relevant to the Job Description.
+              3. **Prioritize Relevance:** Order bullets from highest ATS impact to lowest based on the Job Description.
               4. **Merge & Impress:** If multiple draft points are similar, merge them into a single, punchy bullet point.
               5. **Sort Order:** Sort from [Most Relevant/High Impact] to [Least Relevant].
               6. **Quantity:** Generate at least 10 distinct options.
@@ -95,6 +113,7 @@ public class GeminiService {
               
               Output Format:
               Return a JSON array of strings only. Example: ["Led team of 5...", "Reduced latency by 20%..."].
+              Do not add numbering, markdown, or prefixes like "- ".
             """;
 
         String prompt = "Draft Text: \"" + draftText + "\"" + (hasJD ? "\n\nTarget Job Description: \"" + jobDescription + "\"" : "");
@@ -104,8 +123,18 @@ public class GeminiService {
             JsonNode jsonNode = objectMapper.readTree(responseText);
             if (jsonNode.isArray()) {
                 List<String> result = new ArrayList<>();
-                jsonNode.forEach(node -> result.add(node.asText()));
-                return result;
+                for (JsonNode node : jsonNode) {
+                    if (node.isTextual()) {
+                        result.add(node.asText());
+                    } else if (node.isObject()) {
+                        if (node.has("bullet")) {
+                            result.add(node.get("bullet").asText());
+                        } else if (node.has("text")) {
+                            result.add(node.get("text").asText());
+                        }
+                    }
+                }
+                return rankBulletsByAtsImpact(result, jobDescription);
             } else {
                 return Collections.emptyList();
             }
@@ -114,6 +143,173 @@ public class GeminiService {
             throw new RuntimeException("Failed to generate bullets.");
         }
     }
+
+    private List<String> rankBulletsByAtsImpact(List<String> rawBullets, String jobDescription) {
+        if (rawBullets == null || rawBullets.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<String> cleanedBullets = cleanAndDedupeBullets(rawBullets);
+        if (cleanedBullets.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        Map<String, Integer> keywordWeights = extractKeywordWeights(jobDescription);
+        List<BulletScore> scored = new ArrayList<>();
+
+        for (int i = 0; i < cleanedBullets.size(); i++) {
+            String bullet = cleanedBullets.get(i);
+            double score = keywordWeights.isEmpty()
+                    ? scoreBulletWithoutJobDescription(bullet)
+                    : scoreBulletAgainstJobDescription(bullet, keywordWeights);
+            scored.add(new BulletScore(bullet, score, i));
+        }
+
+        scored.sort(Comparator
+                .comparingDouble(BulletScore::score).reversed()
+                .thenComparingInt(BulletScore::order));
+
+        List<String> ranked = new ArrayList<>();
+        for (BulletScore bulletScore : scored) {
+            ranked.add(bulletScore.bullet());
+        }
+        return ranked;
+    }
+
+    private List<String> cleanAndDedupeBullets(List<String> bullets) {
+        Set<String> seen = new HashSet<>();
+        List<String> cleaned = new ArrayList<>();
+
+        for (String bullet : bullets) {
+            String normalized = sanitizeBullet(bullet);
+            if (normalized.isEmpty()) {
+                continue;
+            }
+
+            String dedupeKey = normalized.toLowerCase(Locale.ROOT);
+            if (seen.add(dedupeKey)) {
+                cleaned.add(normalized);
+            }
+        }
+
+        return cleaned;
+    }
+
+    private String sanitizeBullet(String bullet) {
+        if (bullet == null) {
+            return "";
+        }
+
+        String normalized = bullet.trim();
+        normalized = normalized.replaceAll("^[\\-\\*\\d\\.\\)\\s]+", "");
+        normalized = normalized.replaceAll("\\s+", " ");
+        return normalized.trim();
+    }
+
+    private Map<String, Integer> extractKeywordWeights(String jobDescription) {
+        if (jobDescription == null || jobDescription.isBlank()) {
+            return Collections.emptyMap();
+        }
+
+        Map<String, Integer> frequencies = new HashMap<>();
+        for (String token : tokenize(jobDescription)) {
+            if (token.length() < 2 || STOP_WORDS.contains(token)) {
+                continue;
+            }
+            frequencies.merge(token, 1, Integer::sum);
+        }
+
+        if (frequencies.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        Map<String, Integer> keywordWeights = new HashMap<>();
+        for (Map.Entry<String, Integer> entry : frequencies.entrySet()) {
+            keywordWeights.put(entry.getKey(), Math.min(entry.getValue(), 3) + 1);
+        }
+        return keywordWeights;
+    }
+
+    private double scoreBulletAgainstJobDescription(String bullet, Map<String, Integer> keywordWeights) {
+        List<String> tokens = tokenize(bullet);
+        if (tokens.isEmpty()) {
+            return 0;
+        }
+
+        Set<String> uniqueTokens = new HashSet<>(tokens);
+        double keywordScore = 0;
+        int matchedKeywords = 0;
+
+        for (Map.Entry<String, Integer> entry : keywordWeights.entrySet()) {
+            if (uniqueTokens.contains(entry.getKey())) {
+                keywordScore += entry.getValue();
+                matchedKeywords++;
+            }
+        }
+
+        double metricsBonus = containsMetric(bullet) ? 1.2 : 0.0;
+        double actionVerbBonus = startsWithActionVerb(tokens) ? 0.8 : 0.0;
+        double coverageBonus = matchedKeywords == 0
+                ? 0.0
+                : Math.min(1.5, ((double) matchedKeywords / Math.max(5, keywordWeights.size())) * 4.0);
+
+        return keywordScore + coverageBonus + metricsBonus + actionVerbBonus;
+    }
+
+    private double scoreBulletWithoutJobDescription(String bullet) {
+        List<String> tokens = tokenize(bullet);
+        if (tokens.isEmpty()) {
+            return 0;
+        }
+
+        double score = 0;
+        if (startsWithActionVerb(tokens)) {
+            score += 1.0;
+        }
+        if (containsMetric(bullet)) {
+            score += 1.0;
+        }
+
+        int wordCount = tokens.size();
+        if (wordCount >= 8 && wordCount <= 30) {
+            score += 0.6;
+        } else if (wordCount > 40) {
+            score -= 0.3;
+        }
+
+        return score;
+    }
+
+    private boolean startsWithActionVerb(List<String> tokens) {
+        if (tokens.isEmpty()) {
+            return false;
+        }
+        return ACTION_VERBS.contains(tokens.get(0));
+    }
+
+    private boolean containsMetric(String text) {
+        return text != null && text.matches(".*\\d+.*");
+    }
+
+    private List<String> tokenize(String text) {
+        if (text == null || text.isBlank()) {
+            return Collections.emptyList();
+        }
+
+        String normalized = NON_KEYWORD_CHARS.matcher(text.toLowerCase(Locale.ROOT)).replaceAll(" ");
+        String[] rawTokens = normalized.trim().split("\\s+");
+
+        List<String> tokens = new ArrayList<>();
+        for (String raw : rawTokens) {
+            String token = raw.trim();
+            if (!token.isEmpty()) {
+                tokens.add(token);
+            }
+        }
+        return tokens;
+    }
+
+    private record BulletScore(String bullet, double score, int order) {}
 
     public JsonNode parseCV(String text) {
         if (apiKey == null || apiKey.isEmpty()) {

@@ -1,5 +1,7 @@
 package com.ats.optimizer.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.persistence.*;
 import lombok.Data;
 import java.time.LocalDateTime;
@@ -17,6 +19,14 @@ public class CVHistory {
 
     @Column(columnDefinition = "TEXT")
     private String cvDataJson;
+
+    @OneToOne(cascade = CascadeType.ALL, orphanRemoval = true)
+    @JoinColumn(name = "cv_document_id")
+    @JsonIgnore
+    private CVDocument cvDocument;
+
+    @Transient
+    private JsonNode cvData;
 
     private boolean pinned = false;
 

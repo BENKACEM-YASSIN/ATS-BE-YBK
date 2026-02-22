@@ -5,68 +5,63 @@ import com.ats.optimizer.model.dto.ProfileDTO;
 import com.ats.optimizer.repository.CVHistoryRepository;
 import com.ats.optimizer.repository.ProfileRepository;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
 import java.time.LocalDateTime;
 
 @Service
 @RequiredArgsConstructor
+@Transactional
 public class ProfileService {
 
     private final ProfileRepository profileRepository;
     private final CVHistoryRepository cvHistoryRepository;
-    private final ObjectMapper objectMapper;
+    private final CVDocumentMapper cvDocumentMapper;
 
     public void saveProfile(JsonNode cvData) {
         UserProfile profile = profileRepository.findTopByOrderByIdDesc();
         if (profile == null) {
             profile = new UserProfile();
-            profile.setProfileProgress(20); // Initial progress
+            profile.setProfileProgress(20);
         }
-        
-        profile.setCvDataJson(cvData.toString());
+
+        profile.setCvDocument(cvDocumentMapper.fromJson(cvData));
+        profile.setCvDataJson(null);
         profile.setLastEdited(LocalDateTime.now());
-        
-        // Extract basic info from JSON if available
-        if (cvData.has("personalInfo")) {
+
+        if (cvData != null && cvData.has("personalInfo")) {
             JsonNode info = cvData.get("personalInfo");
             if (info.has("firstName")) profile.setFirstName(info.get("firstName").asText());
             if (info.has("lastName")) profile.setLastName(info.get("lastName").asText());
             if (info.has("title")) profile.setTitle(info.get("title").asText());
             if (info.has("email")) profile.setEmail(info.get("email").asText());
+            if (info.has("phone")) profile.setPhone(info.get("phone").asText());
         }
-        
+
         profileRepository.save(profile);
     }
 
+    @Transactional(readOnly = true)
     public JsonNode getLatestProfile() {
         UserProfile profile = profileRepository.findTopByOrderByIdDesc();
-        if (profile != null && profile.getCvDataJson() != null) {
-            try {
-                return objectMapper.readTree(profile.getCvDataJson());
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to parse stored profile JSON");
-            }
-        }
-        return null;
+        return extractCvData(profile);
     }
-    
+
     public ProfileDTO getProfileDashboard() {
         UserProfile profile = profileRepository.findTopByOrderByIdDesc();
         if (profile == null) {
-            // Return dummy/empty data
             ProfileDTO dto = new ProfileDTO();
             dto.setFirstName("Guest");
             dto.setLastName("User");
             dto.setProfileProgress(0);
             return dto;
         }
-        
-        // Update visit time
+
         profile.setLastVisit(LocalDateTime.now());
         profileRepository.save(profile);
-        
+
         ProfileDTO dto = new ProfileDTO();
         dto.setFirstName(profile.getFirstName());
         dto.setLastName(profile.getLastName());
@@ -82,47 +77,37 @@ public class ProfileService {
         dto.setLastVisit(profile.getLastVisit());
         dto.setLastEditedDate(profile.getLastEdited());
         dto.setLastEditedFileName(profile.getLastEditedFileName());
-        
-        // Stats
         dto.setCvCount(cvHistoryRepository.count());
-        
-        // Calculate detailed stats from the JSON if possible
-        try {
-            if (profile.getCvDataJson() != null) {
-                JsonNode root = objectMapper.readTree(profile.getCvDataJson());
-                
-                if (root.has("workExperience")) {
-                    dto.setWorkExperienceCount(root.get("workExperience").size());
-                    // Rough estimation of years could be done here
-                }
-                if (root.has("education")) {
-                    dto.setEducationCount(root.get("education").size());
-                }
-                if (root.has("skills")) {
-                    JsonNode skills = root.get("skills");
-                    int count = 0;
-                    if (skills.has("digitalSkills")) count += skills.get("digitalSkills").size();
-                    if (skills.has("softSkills")) count += skills.get("softSkills").size();
-                    dto.setSkillsCount(count);
-                    
-                    if (skills.has("otherLanguages")) {
-                         dto.setLanguagesCount(skills.get("otherLanguages").size() + 1); // +1 for mother tongue
-                    }
+
+        JsonNode root = extractCvData(profile);
+        if (root != null) {
+            if (root.has("workExperience")) {
+                dto.setWorkExperienceCount(root.get("workExperience").size());
+            }
+            if (root.has("education")) {
+                dto.setEducationCount(root.get("education").size());
+            }
+            if (root.has("skills")) {
+                JsonNode skills = root.get("skills");
+                int count = 0;
+                if (skills.has("digitalSkills")) count += skills.get("digitalSkills").size();
+                if (skills.has("softSkills")) count += skills.get("softSkills").size();
+                dto.setSkillsCount(count);
+                if (skills.has("otherLanguages")) {
+                    dto.setLanguagesCount(skills.get("otherLanguages").size() + 1);
                 }
             }
-        } catch (Exception e) {
-            // Ignore parse errors for stats
         }
-        
+
         return dto;
     }
-    
+
     public void updateProfileDetails(ProfileDTO update) {
         UserProfile profile = profileRepository.findTopByOrderByIdDesc();
         if (profile == null) {
             profile = new UserProfile();
         }
-        
+
         if (update.getMotto() != null) profile.setMotto(update.getMotto());
         if (update.getSummary() != null) profile.setSummary(update.getSummary());
         if (update.getFirstName() != null) profile.setFirstName(update.getFirstName());
@@ -131,8 +116,7 @@ public class ProfileService {
         if (update.getDrivingLicence() != null) profile.setDrivingLicence(update.getDrivingLicence());
         if (update.getHobbies() != null) profile.setHobbies(update.getHobbies());
         if (update.getInterests() != null) profile.setInterests(update.getInterests());
-        
-        // Update progress logic
+
         int progress = 20;
         if (profile.getSummary() != null && !profile.getSummary().isEmpty()) progress += 10;
         if (profile.getMotto() != null && !profile.getMotto().isEmpty()) progress += 5;
@@ -140,11 +124,23 @@ public class ProfileService {
         if (profile.getDrivingLicence() != null && !profile.getDrivingLicence().isEmpty()) progress += 5;
         if (profile.getHobbies() != null && !profile.getHobbies().isEmpty()) progress += 5;
         if (profile.getInterests() != null && !profile.getInterests().isEmpty()) progress += 5;
-        // Check CV data presence
-        if (profile.getCvDataJson() != null) progress += 40;
-        
+        if (hasCvData(profile)) progress += 40;
+
         profile.setProfileProgress(Math.min(progress, 100));
-        
         profileRepository.save(profile);
     }
+
+    private JsonNode extractCvData(UserProfile profile) {
+        if (profile == null) return null;
+        if (profile.getCvDocument() != null) {
+            return cvDocumentMapper.toJson(profile.getCvDocument());
+        }
+        return cvDocumentMapper.parseRawJson(profile.getCvDataJson());
+    }
+
+    private boolean hasCvData(UserProfile profile) {
+        return profile.getCvDocument() != null ||
+                (profile.getCvDataJson() != null && !profile.getCvDataJson().isBlank());
+    }
 }
+

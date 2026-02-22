@@ -1,5 +1,6 @@
 package com.ats.optimizer.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
 import java.time.LocalDateTime;
@@ -45,4 +46,9 @@ public class UserProfile {
     
     @Column(columnDefinition = "TEXT")
     private String cvDataJson; 
+
+    @OneToOne(cascade = CascadeType.ALL, orphanRemoval = true)
+    @JoinColumn(name = "cv_document_id")
+    @JsonIgnore
+    private CVDocument cvDocument;
 }

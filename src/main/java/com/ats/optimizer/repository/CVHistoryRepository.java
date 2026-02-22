@@ -10,4 +10,5 @@ public interface CVHistoryRepository extends JpaRepository<CVHistory, Long> {
     List<CVHistory> findAllByOrderByIdDesc();
     boolean existsByTitle(String title);
     CVHistory findByTitle(String title);
+    List<CVHistory> findByCvDocumentIsNullAndCvDataJsonIsNotNull();
 }
