@@ -19,23 +19,6 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-
-/**
- * Job Search Service
- * 
- * Job Sources:
- * - Primary: JSearch API (RapidAPI) - Aggregates jobs from multiple sources including:
- *   * Indeed
- *   * LinkedIn (via aggregation, not direct API - LinkedIn's API requires special partnerships)
- *   * Glassdoor
- *   * ZipRecruiter
- *   * And many other job boards
- * 
- * - Fallback: Mock data for testing when API key is not configured
- * 
- * Note: LinkedIn's official API is not publicly available and requires enterprise partnerships.
- * JSearch provides access to LinkedIn job postings through their aggregation service.
- */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -58,7 +41,6 @@ public class JobSearchService {
 
     public JobSearchResponse searchJobs(JobSearchRequest request, String cvProfileJson) {
         try {
-            // Get location and title from profile if not provided
             String location = request.getLocation();
             String jobTitle = request.getJobTitle();
             
@@ -79,30 +61,24 @@ public class JobSearchService {
             }
 
             if (location == null || location.isEmpty()) {
-                location = "Remote"; // Default fallback
+                location = "Remote";
             }
             if (jobTitle == null || jobTitle.isEmpty()) {
-                jobTitle = "Software Developer"; // Default fallback
+                jobTitle = "Software Developer";
             }
 
-            // Search jobs using JSearch API (or fallback to mock data)
             List<JobPost> jobs = searchJobsFromAPI(jobTitle, location, request.getMaxResults());
-            
-            // Extract emails from job descriptions
             jobs = extractEmailsFromJobs(jobs);
-            
-            // Filter to only jobs with emails
+
             jobs = jobs.stream()
                 .filter(job -> job.getEmail() != null && !job.getEmail().isEmpty())
                 .limit(request.getMaxResults())
                 .collect(Collectors.toList());
-            
-            // Score jobs based on CV profile match
+
             if (cvProfileJson != null && !cvProfileJson.isEmpty()) {
                 jobs = scoreJobs(jobs, cvProfileJson);
             }
-            
-            // Sort by match score (highest first)
+
             jobs.sort((a, b) -> {
                 double scoreA = a.getMatchScore() != null ? a.getMatchScore() : 0;
                 double scoreB = b.getMatchScore() != null ? b.getMatchScore() : 0;
@@ -124,7 +100,6 @@ public class JobSearchService {
     }
 
     private List<JobPost> searchJobsFromAPI(String jobTitle, String location, int maxResults) {
-        // Try JSearch API first if key is configured
         if (jsearchApiKey != null && !jsearchApiKey.isEmpty()) {
             try {
                 return searchJSearchAPI(jobTitle, location, maxResults);
@@ -132,8 +107,7 @@ public class JobSearchService {
                 log.warn("JSearch API failed, using fallback", e);
             }
         }
-        
-        // Fallback: Use mock data or web scraping
+
         return generateMockJobs(jobTitle, location, maxResults);
     }
 
@@ -189,7 +163,6 @@ public class JobSearchService {
     }
 
     private List<JobPost> generateMockJobs(String jobTitle, String location, int maxResults) {
-        // Generate mock jobs for testing when API is not available
         List<JobPost> jobs = new ArrayList<>();
         String[] companies = {"TechCorp", "InnovateLabs", "Digital Solutions", "CloudTech", "DataSystems", 
                               "WebDev Inc", "CodeMasters", "FutureTech", "SmartApps", "DevOps Pro"};
@@ -218,7 +191,6 @@ public class JobSearchService {
         for (JobPost job : jobs) {
             String email = extractEmailFromText(job.getDescription());
             if (email == null && job.getUrl() != null) {
-                // Try to fetch and parse the job page
                 try {
                     email = extractEmailFromUrl(job.getUrl());
                 } catch (Exception e) {
@@ -263,8 +235,7 @@ public class JobSearchService {
     private List<JobPost> scoreJobs(List<JobPost> jobs, String cvProfileJson) {
         try {
             JsonNode cvData = objectMapper.readTree(cvProfileJson);
-            
-            // Extract CV text for matching
+
             StringBuilder cvText = new StringBuilder();
             if (cvData.has("personalInfo")) {
                 JsonNode info = cvData.get("personalInfo");
@@ -288,8 +259,7 @@ public class JobSearchService {
             }
             
             String cvTextStr = cvText.toString();
-            
-            // Score each job using Gemini
+
             for (JobPost job : jobs) {
                 try {
                     var atsResult = geminiService.analyzeATS(cvTextStr, job.getDescription());
@@ -298,7 +268,7 @@ public class JobSearchService {
                     job.setRequiredSkills(atsResult.getMissingKeywords());
                 } catch (Exception e) {
                     log.warn("Failed to score job: " + job.getId(), e);
-                    job.setMatchScore(50.0); // Default score
+                    job.setMatchScore(50.0);
                 }
             }
             

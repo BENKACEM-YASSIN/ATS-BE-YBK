@@ -38,8 +38,7 @@ public class PdfService {
 
     public byte[] renderCv(JsonNode cvData) {
         log.info("Starting PDF generation for CV data");
-        
-        // 1. Quick check if frontend is reachable
+
         try {
             java.net.URL url = new java.net.URL(frontendUrl);
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
@@ -67,7 +66,6 @@ public class PdfService {
                     .setViewportSize(1280, 1400));
             Page page = context.newPage();
 
-            // Browser logging
             page.onConsoleMessage(msg -> {
                 String text = msg.text();
                 if ("error".equals(msg.type())) log.error("Browser console error: {}", text);
@@ -76,7 +74,6 @@ public class PdfService {
             page.onPageError(err -> log.error("Browser page crash: {}", err));
 
             String jsonStr = cvData.toString();
-            // Use StringEscapeUtils to safely escape the JSON for use in a JS string literal
             String escapedJson = StringEscapeUtils.escapeEcmaScript(jsonStr);
             
             String initScript = "console.log('PDF: Injecting CV data...'); " +
@@ -87,7 +84,6 @@ public class PdfService {
             page.addInitScript(initScript);
 
             log.info("Navigating to: {}/pdf-preview", frontendUrl);
-            // Use LOAD instead of NETWORKIDLE as Vite/Angular might have persistent connections (HMR, etc.)
             Response response = page.navigate(frontendUrl + "/pdf-preview", new Page.NavigateOptions().setWaitUntil(WaitUntilState.LOAD));
             
             if (response == null || !response.ok()) {
@@ -99,10 +95,8 @@ public class PdfService {
 
             log.info("Waiting for CV container (.cv-page)...");
             try {
-                // Wait for .cv-page which is our new wrapper
                 page.waitForSelector(".cv-page", new Page.WaitForSelectorOptions().setTimeout(20000));
                 log.info("CV container found!");
-                // Wait for pagination to finish so each page has proper spacing
                 page.waitForSelector("body.pdf-ready", new Page.WaitForSelectorOptions().setTimeout(20000));
                 log.info("PDF pagination ready.");
             } catch (Exception e) {

@@ -127,7 +127,7 @@ public class GeminiService {
                 jsonNode.forEach(node -> result.add(node.asText()));
                 return result;
             } else {
-                return Collections.singletonList(responseText); // Fallback
+                return Collections.singletonList(responseText);
             }
         } catch (JsonProcessingException e) {
             log.error("Failed to parse JSON", e);
@@ -520,8 +520,7 @@ public class GeminiService {
         String responseText = callGemini(prompt, systemInstruction, 0.2);
         try {
             JsonNode parsed = objectMapper.readTree(responseText);
-            
-            // Add defaults for UI tracking (as per frontend logic)
+
             if (parsed.isObject()) {
                 ObjectNode obj = (ObjectNode) parsed;
                 if (!obj.has("theme")) obj.put("theme", "euro-classic");
@@ -568,7 +567,6 @@ public class GeminiService {
             return objectMapper.readValue(responseText, ATSResult.class);
         } catch (Exception e) {
             log.error("ATS Analysis Error:", e);
-            // Return fallback as per frontend logic
             ATSResult fallback = new ATSResult();
             fallback.setScore(0);
             fallback.setMatchReasoning("Could not analyze at this time.");
@@ -587,22 +585,19 @@ public class GeminiService {
         }
 
         Map<String, Object> requestBody = new HashMap<>();
-        
-        // Contents
+
         Map<String, Object> part = new HashMap<>();
         part.put("text", prompt);
         Map<String, Object> content = new HashMap<>();
         content.put("parts", Collections.singletonList(part));
         requestBody.put("contents", Collections.singletonList(content));
 
-        // System Instruction
         Map<String, Object> sysPart = new HashMap<>();
         sysPart.put("text", systemInstruction);
         Map<String, Object> sysContent = new HashMap<>();
         sysContent.put("parts", Collections.singletonList(sysPart));
         requestBody.put("systemInstruction", sysContent);
 
-        // Config
         Map<String, Object> config = new HashMap<>();
         config.put("responseMimeType", "application/json");
         requestBody.put("generationConfig", config);
@@ -618,7 +613,6 @@ public class GeminiService {
                     .block();
 
             JsonNode root = objectMapper.readTree(jsonResponse);
-            // Extract the text from the response structure: candidates[0].content.parts[0].text
             JsonNode textNode = root.path("candidates").get(0).path("content").path("parts").get(0).path("text");
             if (textNode.isMissingNode()) {
                 throw new RuntimeException("Invalid response from Gemini");
