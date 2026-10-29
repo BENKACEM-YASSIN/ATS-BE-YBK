@@ -11,6 +11,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.util.regex.Pattern;
 import java.util.*;
@@ -43,8 +45,17 @@ public class GeminiService {
     @Value("${gemini.api.key}")
     private String apiKey;
 
-    @Value("${gemini.api.url}")
-    private String apiUrl;
+    @Value("${gemini.api.base-url}")
+    private String apiBaseUrl;
+
+    @Value("${gemini.models}")
+    private String configuredModels;
+
+    private final ThreadLocal<String> usedModel = new ThreadLocal<>();
+
+    public String getUsedModel() {
+        return usedModel.get();
+    }
 
     public List<String> enhanceText(String text, String type) {
         if (apiKey == null || apiKey.isEmpty()) {
@@ -578,9 +589,10 @@ public class GeminiService {
 
     private String callGemini(String prompt, String systemInstruction, double temperature) {
         String trimmedApiKey = apiKey != null ? apiKey.trim() : "";
-        String trimmedApiUrl = apiUrl != null ? apiUrl.trim() : "";
+        String trimmedApiBaseUrl = apiBaseUrl != null ? apiBaseUrl.trim().replaceAll("/+$", "") : "";
+        usedModel.remove();
 
-        if (trimmedApiKey.isEmpty() || trimmedApiUrl.isEmpty()) {
+        if (trimmedApiKey.isEmpty() || trimmedApiBaseUrl.isEmpty()) {
             throw new RuntimeException("API Key or URL is missing.");
         }
 
@@ -600,28 +612,53 @@ public class GeminiService {
 
         Map<String, Object> config = new HashMap<>();
         config.put("responseMimeType", "application/json");
+        config.put("temperature", temperature);
         requestBody.put("generationConfig", config);
 
-        String url = trimmedApiUrl + "?key=" + trimmedApiKey;
+        RuntimeException lastFailure = null;
+        for (String model : configuredModels.split(",")) {
+            String candidate = model.trim();
+            if (candidate.isEmpty()) continue;
+            String url = trimmedApiBaseUrl + "/" + candidate + ":generateContent?key=" + trimmedApiKey;
+            try {
+                String jsonResponse = webClient.post()
+                        .uri(url)
+                        .bodyValue(requestBody)
+                        .retrieve()
+                        .bodyToMono(String.class)
+                        .block();
 
-        try {
-            String jsonResponse = webClient.post()
-                    .uri(url)
-                    .bodyValue(requestBody)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
-
-            JsonNode root = objectMapper.readTree(jsonResponse);
-            JsonNode textNode = root.path("candidates").get(0).path("content").path("parts").get(0).path("text");
-            if (textNode.isMissingNode()) {
-                throw new RuntimeException("Invalid response from Gemini");
+                JsonNode root = objectMapper.readTree(jsonResponse);
+                JsonNode textNode = root.path("candidates").get(0).path("content").path("parts").get(0).path("text");
+                if (textNode.isMissingNode()) {
+                    throw new RuntimeException("Invalid response from " + candidate);
+                }
+                usedModel.set(candidate);
+                log.info("Gemini request completed with model={}", candidate);
+                return textNode.asText();
+            } catch (WebClientResponseException | WebClientRequestException error) {
+                lastFailure = new RuntimeException("Gemini " + candidate + " failed: " + error.getMessage(), error);
+                if (!canFailOver(error)) {
+                    throw lastFailure;
+                }
+                log.warn("Gemini model {} unavailable; trying next configured model", candidate);
+            } catch (Exception error) {
+                throw new RuntimeException("Failed to communicate with AI service: " + error.getMessage(), error);
             }
-            return textNode.asText();
-
-        } catch (Exception e) {
-            log.error("Error calling Gemini API", e);
-            throw new RuntimeException("Failed to communicate with AI service: " + e.getMessage());
         }
+        throw lastFailure != null
+                ? lastFailure
+                : new RuntimeException("No Gemini models are configured.");
+    }
+
+    private boolean canFailOver(Exception error) {
+        if (error instanceof WebClientRequestException) return true;
+        if (error instanceof WebClientResponseException response) {
+            int status = response.getStatusCode().value();
+            // 429 represents rate/daily quota. We intentionally do not switch
+            // keys or models to bypass that provider limit.
+            return status == 404 || status == 408 || status >= 500;
+        }
+        return false;
     }
 }

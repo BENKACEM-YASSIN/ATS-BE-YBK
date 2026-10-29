@@ -70,6 +70,8 @@ Thumbs.db
 # Application specific
 application.properties  # Only if it contains secrets; usually commit a template like application-example.properties
 application-dev.properties  # Environment-specific configs
+application-local.properties
+graphify-out/
 !.mvn/wrapper/maven-wrapper.jar
 .mvn/wrapper/maven-wrapper.properties
 

@@ -15,7 +15,6 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/ai")
-@CrossOrigin(origins = "http://localhost:4200")
 @RequiredArgsConstructor
 public class AIController {
 
@@ -23,12 +22,12 @@ public class AIController {
 
     @PostMapping("/enhance-text")
     public ResponseEntity<List<String>> enhanceText(@RequestBody EnhanceTextRequest request) {
-        return ResponseEntity.ok(geminiService.enhanceText(request.getText(), request.getType()));
+        return response(geminiService.enhanceText(request.getText(), request.getType()));
     }
 
     @PostMapping("/generate-bullets")
     public ResponseEntity<List<String>> generateTailoredBullets(@RequestBody TailoredBulletsRequest request) {
-        return ResponseEntity.ok(geminiService.generateTailoredBullets(
+        return response(geminiService.generateTailoredBullets(
                 request.getDraftText(),
                 request.getJobDescription(),
                 request.getSectionType()
@@ -37,11 +36,20 @@ public class AIController {
 
     @PostMapping("/parse-cv")
     public ResponseEntity<JsonNode> parseCV(@RequestBody ParseCVRequest request) {
-        return ResponseEntity.ok(geminiService.parseCV(request.getText()));
+        return response(geminiService.parseCV(request.getText()));
     }
 
     @PostMapping("/analyze-ats")
     public ResponseEntity<ATSResult> analyzeATS(@RequestBody AnalyzeATSRequest request) {
-        return ResponseEntity.ok(geminiService.analyzeATS(request.getCvText(), request.getJobDescription()));
+        return response(geminiService.analyzeATS(request.getCvText(), request.getJobDescription()));
+    }
+
+    private <T> ResponseEntity<T> response(T body) {
+        ResponseEntity.BodyBuilder response = ResponseEntity.ok();
+        String usedModel = geminiService.getUsedModel();
+        if (usedModel != null && !usedModel.isBlank()) {
+            response.header("X-Persona-AI-Model", usedModel);
+        }
+        return response.body(body);
     }
 }

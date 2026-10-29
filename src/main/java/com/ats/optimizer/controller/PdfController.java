@@ -14,7 +14,6 @@ import org.springframework.http.MediaType;
 
 @RestController
 @RequestMapping("/api/pdf")
-@CrossOrigin(origins = "http://localhost:4200")
 @RequiredArgsConstructor
 public class PdfController {
 

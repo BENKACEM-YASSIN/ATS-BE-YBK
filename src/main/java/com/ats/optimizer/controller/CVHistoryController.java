@@ -10,7 +10,6 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/history")
-@CrossOrigin(origins = {"http://localhost:4200", "http://localhost:4300"})
 public class CVHistoryController {
     @Autowired
     private CVHistoryService service;
